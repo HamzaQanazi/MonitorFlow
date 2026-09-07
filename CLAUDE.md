@@ -799,7 +799,7 @@ MIME validated by magic bytes, UUID name outside web root, served
 ## 13. Deliberately NOT built (do not add without a deliberate re-scoping decision)
 
 standalone Operations Monitor page ·
-WebSocket live refresh · push notifications ·
+WebSocket live refresh ·
 **live/continuous GPS tracking, location history,
 behavioural monitoring** (I10) · signature capture · draft saving · satisfaction
 ratings · multi-organization / true multi-tenancy (single-org per deployment;
@@ -1171,6 +1171,56 @@ Fixed by excluding `view_all_company` from that blanket grant
 (`employees.api.test.js`) that builds an isolated level holding it and
 proves the cross-department reach directly, rather than trusting the SQL
 by inspection alone.
+
+**Re-scoped 2026-09-07 (supervisor-mandated, was on this list): push
+notifications.** Supervisors require the mobile apps to deliver a
+notification even while backgrounded/closed, not just the existing 30-second
+in-app poll (§3, §11). Requirement recorded here; **not implemented yet, and
+not to be built as a quiet default** — it needs a push vendor (FCM is the
+practical default for one Flutter codebase covering Android/iOS), which is a
+**4th named-vendor exception** alongside Nominatim/Gemini/SMTP (§9/§13),
+each of which got its own explicit two-student conversation before landing.
+Same bar applies here: agree the vendor and the delivery-token/registration
+design (device token storage, a new `device_token` table or column,
+platform-specific credentials) before writing code, not after.
+
+**Added 2026-09-07 (supervisor-mandated): full employee evaluation system.**
+New requirement, not yet designed — scope, metrics, and schema are still to
+be decided. Whatever it
+measures must stay outcome-based per **I10** (§2): completion count,
+time-to-completion, reopen rate, SLA adherence, and similar — never a
+behavioural/surveillance metric. I10 applies to every feature in this
+project equally; a new system doesn't get a pass on it.
+
+**Added 2026-09-07 (supervisor-mandated): CSP backtracking for scheduling.**
+`POST /schedule/suggest`'s greedy fairness-ranking heuristic (§13's
+2026-08-21 AI-suggested-scheduling entry) is being replaced with a proper
+constraint-satisfaction backtracking solver over the same inputs (shift
+templates, chosen weekdays/date range, `weekly_rest_day` skips, no
+double-booking) and the same **preview-only** contract into
+`PUT /schedule/roster` — a human still applies the result, nothing here
+starts auto-writing the roster. Local computation over existing DB data
+either way, no vendor call, so this doesn't touch the named-vendor list.
+
+**Flagged 2026-09-07, NOT approved — recorded, do not build:** the same
+supervisor meeting also asked for (a) a company-wide group chat and (b)
+periodic employee location tracking (5–15 min intervals), both owned by a
+different student (Abdallah), not in this file's current task order.
+Group chat is new, uncontroversial scope. **Periodic location tracking
+directly contradicts I10** (§2 — "no live GPS, location history... An
+ethical, GDPR, and product position", explicitly not a preference) and the
+project's own prior, deliberate call on this exact question: the Time Clock
+location feature (§2, §6) was scoped down on purpose to a single point
+captured at clock-in/out, with an explicit note that "no geofencing/
+proximity check anywhere" and that comparing a coordinate to anything is
+"still a new decision, not a natural extension" of that exception. A polling
+interval is exactly the live-tracking shape I10 was written to rule out.
+Per this file's own top-of-document rule ("flag the contradiction instead
+of silently resolving it either way"), this entry only records that the
+requirement was raised — it is **not** a re-scope. Reversing I10 for this
+needs the same kind of explicit, both-students-plus-supervisor decision
+`view_all_company` got above, made deliberately, not inherited by default
+because a meeting mentioned it.
 
 **IN:** the **first-login onboarding wizard** (v7, §9) · the interactive **map pin
 picker** (v5) · **operational audit rows** (status/assign/priority write

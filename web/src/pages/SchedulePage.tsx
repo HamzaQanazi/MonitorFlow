@@ -366,6 +366,8 @@ function RosterView() {
   const [cell, setCell] = useState<{ employeeId: number; employeeName: string; date: string; current: RosterEntry | undefined } | null>(null)
   const [copying, setCopying] = useState(false)
   const [copyConfirm, setCopyConfirm] = useState(false)
+  const [clearing, setClearing] = useState(false)
+  const [clearConfirm, setClearConfirm] = useState(false)
   const [suggestOpen, setSuggestOpen] = useState(false)
 
   async function load() {
@@ -416,6 +418,20 @@ function RosterView() {
     }
   }
 
+  async function clearWeek() {
+    setClearConfirm(false)
+    setClearing(true)
+    try {
+      const entries = rows.flatMap((emp) => emp.entries.map((e) => ({ employeeId: emp.employeeId, date: e.date, templateId: null })))
+      if (entries.length) await apiFetch('/schedule/roster', { method: 'PUT', body: { entries } })
+      await load()
+    } catch (err) {
+      setError((err as Error).message)
+    } finally {
+      setClearing(false)
+    }
+  }
+
   const rows = employees ?? []
 
   return (
@@ -434,6 +450,15 @@ function RosterView() {
             title={canManage ? undefined : t('no_manage_cap')}
           >
             {copying ? t('sc_copying') : t('sc_copy_last_week')}
+          </button>
+          <button
+            type="button"
+            className="req-retry emp-add"
+            onClick={() => setClearConfirm(true)}
+            disabled={!canManage || clearing || !employees || !rows.some((emp) => emp.entries.length)}
+            title={canManage ? undefined : t('no_manage_cap')}
+          >
+            {clearing ? t('sc_clearing') : t('sc_clear_week')}
           </button>
           <button
             type="button"
@@ -550,6 +575,23 @@ function RosterView() {
               </button>
               <button type="button" className="req-retry" onClick={copyLastWeek}>
                 {t('sc_copy_last_week')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {clearConfirm && (
+        <div className="dialog-backdrop" onClick={() => setClearConfirm(false)}>
+          <div className="dialog" onClick={(e) => e.stopPropagation()}>
+            <h4>{t('sc_clear_week_q')}</h4>
+            <p className="req-status-msg">{t('sc_clear_week_warn')}</p>
+            <div className="dialog-actions">
+              <button type="button" className="detail-close-text" onClick={() => setClearConfirm(false)}>
+                {t('cancel')}
+              </button>
+              <button type="button" className="req-retry" onClick={clearWeek}>
+                {t('sc_clear_week')}
               </button>
             </div>
           </div>
@@ -692,7 +734,7 @@ function SuggestDialog({
   const [from, setFrom] = useState(weekStart)
   const [to, setTo] = useState(weekEnd)
   const [templateId, setTemplateId] = useState(templates[0] ? String(templates[0].id) : '')
-  const [days, setDays] = useState<Set<number>>(new Set([1, 2, 3, 4, 5]))
+  const [days, setDays] = useState<Set<number>>(new Set([0, 1, 2, 3, 4])) // Fri+Sat off by default
   const [perDay, setPerDay] = useState('')
   const [preview, setPreview] = useState<{ entries: SuggestEntry[]; alreadyScheduledSkipped: number; restDaySkipped: number } | null>(null)
   const [errors, setErrors] = useState<FieldErrors>({})

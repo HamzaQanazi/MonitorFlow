@@ -11,6 +11,7 @@ const { withTx, logAudit } = require('../lib/audit');
 const { ownerScopeIds } = require('../lib/scope');
 const { companyDate } = require('../lib/timeClock');
 const { isBilingual } = require('../lib/i18nLabel');
+const { solveSchedule } = require('../lib/scheduleSolver');
 
 const router = express.Router();
 router.use(requireAuth);
@@ -264,15 +265,16 @@ router.put('/roster', requireCapabilityOrAdmin('manage_employees'), async (req, 
 // POST /schedule/suggest — preview-only: proposes roster entries for a manager
 // to review, never writes schedule_entry itself (AI scheduling track, CLAUDE.md
 // §13 — a human stays in the loop, unlike auto-assign's opt-in-and-fire). Local
-// heuristic over existing data, no vendor call, same reasoning as autoAssign's
-// ranking: fill one template across the chosen weekdays for the chosen (or
-// whole-subtree) employee pool, balanced by who has worked the fewest shifts
-// recently when `perDay` caps who's picked each day. Skips an employee on
-// their `users.weekly_rest_day` if set — lets a 5-day contract inside a
-// wider company working week (e.g. a 6-day week) come out right without the
-// manager hand-editing afterward. Never overwrites an existing
-// schedule_entry — the manager applies the result via the existing
-// PUT /schedule/roster, so this has no write path of its own.
+// computation over existing data, no vendor call. Fills one template across
+// the chosen weekdays for the chosen (or whole-subtree) employee pool via
+// lib/scheduleSolver.js's backtracking CSP solver: nobody is double-booked
+// the same day, a `users.weekly_rest_day` pin is always honored, and — once
+// >=2 weekdays are selected — every employee is guaranteed at least one
+// unassigned offered day per calendar week, chosen by the solver when
+// nobody pinned a specific one. See scheduleSolver.js for why a plain
+// greedy fill isn't enough to keep that guarantee. Never overwrites an
+// existing schedule_entry — the manager applies the result via the
+// existing PUT /schedule/roster, so this has no write path of its own.
 router.post('/suggest', requireCapabilityOrAdmin('manage_employees'), async (req, res, next) => {
   try {
     const { from, to, templateId, weekdays, employeeIds, perDay } = req.body || {};
@@ -332,29 +334,26 @@ router.post('/suggest', requireCapabilityOrAdmin('manage_employees'), async (req
       ),
     ]);
     const alreadyScheduled = new Set(existing.map((e) => `${e.employee_id}|${e.date}`));
-    const load = new Map(employees.map((e) => [e.id, 0]));
-    for (const r of recent) load.set(r.employee_id, r.count);
+    const recentLoad = new Map(recent.map((r) => [r.employee_id, r.count]));
 
-    const cap = Number.isInteger(perDay) ? perDay : employees.length;
-    const entries = [];
-    let alreadyScheduledSkipped = 0;
-    let restDaySkipped = 0;
+    const dates = [];
     for (let d = from; d <= to; d = addDaysIso(d, 1)) {
-      const weekday = new Date(`${d}T00:00:00Z`).getUTCDay();
-      if (!days.has(weekday)) continue;
-      const onRestDay = employees.filter((e) => e.weekly_rest_day === weekday && !alreadyScheduled.has(`${e.id}|${d}`));
-      restDaySkipped += onRestDay.length;
-      const candidates = employees.filter(
-        (e) => e.weekly_rest_day !== weekday && !alreadyScheduled.has(`${e.id}|${d}`)
-      );
-      alreadyScheduledSkipped += employees.length - onRestDay.length - candidates.length;
-      candidates.sort((a, b) => load.get(a.id) - load.get(b.id) || a.id - b.id);
-      for (const e of candidates.slice(0, cap)) {
-        entries.push({ employeeId: e.id, employeeName: e.name, date: d, templateId: template.id });
-        load.set(e.id, load.get(e.id) + 1);
-      }
-      if (entries.length > 500) return res.status(422).json({ errors: { to: 'Suggestion is too large — narrow the range or weekdays' } });
+      if (days.has(new Date(`${d}T00:00:00Z`).getUTCDay())) dates.push(d);
     }
+    const cap = Number.isInteger(perDay) ? perDay : employees.length;
+    if (dates.length * cap > 500) {
+      return res.status(422).json({ errors: { to: 'Suggestion is too large — narrow the range or weekdays' } });
+    }
+
+    const { entries, restDaySkipped, alreadyScheduledSkipped } = solveSchedule({
+      dates,
+      cap,
+      weekdayCount: days.size,
+      employees: employees.map((e) => ({ id: e.id, name: e.name, weeklyRestDay: e.weekly_rest_day })),
+      alreadyScheduled,
+      recentLoad,
+    });
+    for (const e of entries) e.templateId = template.id;
 
     res.json({ entries, template: serializeTemplate(template), alreadyScheduledSkipped, restDaySkipped });
   } catch (err) {
