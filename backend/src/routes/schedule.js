@@ -270,11 +270,13 @@ router.put('/roster', requireCapabilityOrAdmin('manage_employees'), async (req, 
 // lib/scheduleSolver.js's backtracking CSP solver: nobody is double-booked
 // the same day, a `users.weekly_rest_day` pin is always honored, and — once
 // >=2 weekdays are selected — every employee is guaranteed at least one
-// unassigned offered day per calendar week, chosen by the solver when
-// nobody pinned a specific one. See scheduleSolver.js for why a plain
-// greedy fill isn't enough to keep that guarantee. Never overwrites an
-// existing schedule_entry — the manager applies the result via the
-// existing PUT /schedule/roster, so this has no write path of its own.
+// unassigned offered day, chosen by the solver when nobody pinned a
+// specific one. `from`/`to` is capped to one calendar week (user-directed,
+// see the range check below) — a manager generates one week at a time.
+// See scheduleSolver.js for why a plain greedy fill isn't enough to keep
+// that guarantee. Never overwrites an existing schedule_entry — the
+// manager applies the result via the existing PUT /schedule/roster, so
+// this has no write path of its own.
 router.post('/suggest', requireCapabilityOrAdmin('manage_employees'), async (req, res, next) => {
   try {
     const { from, to, templateId, weekdays, employeeIds, perDay } = req.body || {};
@@ -291,8 +293,14 @@ router.post('/suggest', requireCapabilityOrAdmin('manage_employees'), async (req
     if (perDay !== undefined && !(Number.isInteger(perDay) && perDay > 0)) errors.perDay = 'perDay must be a positive integer';
     if (Object.keys(errors).length) return res.status(422).json({ errors });
     if (from > to) return res.status(422).json({ errors: { to: 'to must be on or after from' } });
-    if ((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86400000 > 90) {
-      return res.status(422).json({ errors: { to: 'Range is limited to 90 days' } });
+    // Capped to one calendar week, user-directed (was: up to 90 days,
+    // solved as several independent weeks) — a manager generates one week
+    // at a time, same as the Roster grid always displays one week and
+    // Copy Last Week always copies one. lib/scheduleSolver.js relies on
+    // this: it never buckets or splits its `dates` input by week anymore,
+    // it just treats the whole thing as "the week."
+    if ((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86400000 > 6) {
+      return res.status(422).json({ errors: { to: 'Range is limited to one week' } });
     }
 
     const template = (
@@ -318,23 +326,11 @@ router.post('/suggest', requireCapabilityOrAdmin('manage_employees'), async (req
       return res.json({ entries: [], template: serializeTemplate(template), alreadyScheduledSkipped: 0, restDaySkipped: 0 });
     }
 
-    const [{ rows: existing }, { rows: recent }] = await Promise.all([
-      pool.query(`SELECT employee_id, date::text AS date FROM schedule_entry WHERE employee_id = ANY($1::int[]) AND date BETWEEN $2 AND $3`, [
-        poolIds,
-        from,
-        to,
-      ]),
-      // Trailing 30-day lookback ending the day before the range starts —
-      // "who's worked the fewest shifts recently" for rotation fairness.
-      pool.query(
-        `SELECT employee_id, COUNT(*)::int AS count FROM schedule_entry
-         WHERE employee_id = ANY($1::int[]) AND date >= $2::date - INTERVAL '30 days' AND date < $2::date
-         GROUP BY employee_id`,
-        [poolIds, from]
-      ),
-    ]);
+    const { rows: existing } = await pool.query(
+      `SELECT employee_id, date::text AS date FROM schedule_entry WHERE employee_id = ANY($1::int[]) AND date BETWEEN $2 AND $3`,
+      [poolIds, from, to]
+    );
     const alreadyScheduled = new Set(existing.map((e) => `${e.employee_id}|${e.date}`));
-    const recentLoad = new Map(recent.map((r) => [r.employee_id, r.count]));
 
     const dates = [];
     for (let d = from; d <= to; d = addDaysIso(d, 1)) {
@@ -351,7 +347,6 @@ router.post('/suggest', requireCapabilityOrAdmin('manage_employees'), async (req
       weekdayCount: days.size,
       employees: employees.map((e) => ({ id: e.id, name: e.name, weeklyRestDay: e.weekly_rest_day })),
       alreadyScheduled,
-      recentLoad,
     });
     for (const e of entries) e.templateId = template.id;
 

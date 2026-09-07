@@ -1,7 +1,8 @@
 // Unit tests for lib/scheduleSolver.js — no DB/server needed, pure function.
 // Each test is here to prove one specific design decision, not just to pad
 // coverage — see lib/scheduleSolver.js's header comment for the reasoning
-// each one is checking.
+// each one is checking. `dates` is always at most one calendar week's worth
+// of days (routes/schedule.js enforces the 7-day cap before this is called).
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { solveSchedule } = require('../src/lib/scheduleSolver');
@@ -76,19 +77,16 @@ test('a single selected weekday never triggers the day-off constraint', () => {
   assert.deepEqual(result.entries, [{ employeeId: 1, employeeName: 'C', date: '2026-09-07' }]);
 });
 
-test('an infeasible week falls back on its own, without costing a later feasible week its guarantee', () => {
-  // 4 employees (ids 1-4), perDay 2, two Mon+Tue weeks.
-  // Week 1: employee 4 is already scheduled elsewhere both days, so only
-  // 3 people are ever eligible for 2 slots/day across 2 days — needing 4
-  // person-days from a pool where nobody can ethically work more than 1 of
-  // the 2 days is impossible (max fair coverage 3 < 4 needed). That week
-  // has to fall back to "just fill it," and someone works both days.
-  // Week 2: all 4 are eligible, so 2 slots/day across 2 days (4
-  // person-days total) exactly matches "everybody works exactly 1 of the
-  // 2 days" — feasible, and should come out fully fair despite week 1
-  // failing right before it.
+test('an infeasible week falls back to a plain fill rather than leaving slots empty', () => {
+  // 4 employees (ids 1-4), perDay 2, Mon+Tue. Employee 4 is already
+  // scheduled elsewhere both days, so only 3 people are ever eligible for
+  // 2 slots/day across 2 days — needing 4 person-days from a pool where
+  // nobody can ethically work more than 1 of the 2 days is impossible (max
+  // fair coverage 3 < 4 needed). The strict pass must fail, and the
+  // fallback should still fully staff both days — someone just ends up
+  // working both, instead of a slot silently going unfilled.
   const result = solveSchedule({
-    dates: ['2026-09-07', '2026-09-08', '2026-09-14', '2026-09-15'],
+    dates: ['2026-09-07', '2026-09-08'],
     cap: 2,
     weekdayCount: 2,
     employees: [
@@ -100,56 +98,11 @@ test('an infeasible week falls back on its own, without costing a later feasible
     alreadyScheduled: new Set(['4|2026-09-07', '4|2026-09-08']),
   });
 
-  const byDate = {};
-  for (const e of result.entries) {
-    (byDate[e.date] ??= []).push(e.employeeId);
-  }
-
-  // Week 1: someone necessarily works both offered days (infeasible, so
-  // the guarantee was dropped for this week only).
-  const week1Worked = new Map();
-  for (const id of [...byDate['2026-09-07'], ...byDate['2026-09-08']]) {
-    week1Worked.set(id, (week1Worked.get(id) || 0) + 1);
-  }
-  assert.ok([...week1Worked.values()].some((count) => count === 2), 'week 1 must be understaffed-fair, not guarantee-clean');
-
-  // Week 2: every one of the 4 employees works exactly one of the two days.
-  const week2Worked = new Map();
-  for (const id of [...byDate['2026-09-14'], ...byDate['2026-09-15']]) {
-    week2Worked.set(id, (week2Worked.get(id) || 0) + 1);
-  }
-  assert.equal(week2Worked.size, 4, 'all 4 employees get exactly one shift in week 2');
-  assert.ok([...week2Worked.values()].every((count) => count === 1), 'nobody in week 2 works both days');
-
-  assert.equal(result.restDaySkipped, 0);
-  assert.equal(result.alreadyScheduledSkipped, 2); // employee 4, both days of week 1
-});
-
-test("buckets a week the way the roster page displays it (Mon-Sun), not Sun-Sat", () => {
-  // Real bug caught before shipping the "Generate week" button: the web
-  // Roster page's displayed week runs Monday-to-Sunday (mondayOf() in
-  // SchedulePage.tsx). Bucketing Sun-Sat instead splits that one displayed
-  // week into two pieces right at the Sunday — a 5-day piece (Mon-Thu+Sat,
-  // Friday off) and the trailing Sunday alone in its own 1-day "week",
-  // which can never satisfy "has a day off" (there's no other day to
-  // check against) and silently falls back to unconstrained filling. Both
-  // halves then have their own fallback, and whether the two fallbacks'
-  // remainders happen to add up evenly is luck, not a guarantee — this
-  // failed for 12 employees/cap 10 in exactly this shape before the fix.
-  const dates = ['2026-09-07', '2026-09-08', '2026-09-09', '2026-09-10', '2026-09-12', '2026-09-13']; // Mon-Thu + Sat + Sun, Fri off
-  const employees = Array.from({ length: 13 }, (_, i) => ({ id: i + 1, name: `E${i + 1}`, weeklyRestDay: null }));
-  const cap = Math.floor((employees.length * 5) / 6); // 10
-
-  const result = solveSchedule({ dates, cap, weekdayCount: 6, employees, alreadyScheduled: new Set() });
-  assert.equal(result.entries.length, cap * 6);
-
-  const counts = new Map();
-  for (const e of result.entries) counts.set(e.employeeId, (counts.get(e.employeeId) || 0) + 1);
-  // 60 shifts / 13 employees = 8 people at 5, 5 people at 4 (8*5 + 5*4 = 60)
-  // — not a wide spread like the pre-fix bug could produce.
-  const values = [...counts.values()];
-  assert.ok(values.every((c) => c === 4 || c === 5), `expected only 4s and 5s, got ${values.join(',')}`);
-  assert.equal(values.filter((c) => c === 5).length, 8);
+  assert.equal(result.entries.length, 4); // both days fully staffed, nothing left empty
+  const worked = new Map();
+  for (const e of result.entries) worked.set(e.employeeId, (worked.get(e.employeeId) || 0) + 1);
+  assert.ok([...worked.values()].some((count) => count === 2), 'someone necessarily works both days — the guarantee is infeasible here');
+  assert.equal(result.alreadyScheduledSkipped, 2); // employee 4, both days
 });
 
 test('the weekly fair ceiling stops one employee spiking while others sit idle', () => {
@@ -177,29 +130,23 @@ test('the weekly fair ceiling stops one employee spiking while others sit idle',
 
 test('a heavily saturated request terminates quickly instead of hanging', () => {
   // Measured before STEP_BUDGET existed: 20 employees, cap 17/day, all 7
-  // days selected, 4 weeks — right at the edge of "barely possible while
-  // everyone still gets a break" — took 30+ seconds of plain backtracking
-  // per week before it was cut off. This must now come back in well under
-  // a second by falling back to the guarantee-off pass once a week's
-  // strict search burns through its step budget.
+  // days of the week — right at the edge of "barely possible while
+  // everyone still gets a break" — took several seconds of plain
+  // backtracking before it was cut off. Must now come back in well under
+  // a second by falling back to the guarantee-off pass once the strict
+  // search burns through its step budget.
   const employees = Array.from({ length: 20 }, (_, i) => ({ id: i + 1, name: `E${i + 1}`, weeklyRestDay: null }));
   const dates = [];
   let d = new Date('2026-09-07T00:00:00Z');
-  for (let i = 0; i < 28; i++) {
+  for (let i = 0; i < 7; i++) {
     dates.push(d.toISOString().slice(0, 10));
     d.setUTCDate(d.getUTCDate() + 1);
   }
 
   const start = process.hrtime.bigint();
-  const result = solveSchedule({
-    dates,
-    cap: 17,
-    weekdayCount: 7,
-    employees,
-    alreadyScheduled: new Set(),
-  });
+  const result = solveSchedule({ dates, cap: 17, weekdayCount: 7, employees, alreadyScheduled: new Set() });
   const ms = Number(process.hrtime.bigint() - start) / 1e6;
 
   assert.ok(ms < 5000, `expected well under 5s, took ${ms.toFixed(0)}ms`);
-  assert.equal(result.entries.length, 17 * 28);
+  assert.equal(result.entries.length, 17 * 7);
 });

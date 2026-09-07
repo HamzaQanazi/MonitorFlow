@@ -335,12 +335,13 @@ function fieldErrorsOf(err: unknown): FieldErrors {
   return {}
 }
 
-// Monday on/before `iso`, computed in UTC to match the backend's UTC day
-// bucketing (lib/timeClock.js / routes/timeclock.js).
-function mondayOf(iso: string): string {
+// Sunday on/before `iso`, computed in UTC. The backend itself doesn't force
+// a particular week-start day — routes/timeClock.js takes `weekStart` as
+// given (see its own GET /timeclock/timesheets comment) — this is purely a
+// display choice, matching SchedulePage.tsx's own sundayOf().
+function sundayOf(iso: string): string {
   const d = new Date(`${iso}T00:00:00Z`)
-  const day = d.getUTCDay()
-  d.setUTCDate(d.getUTCDate() + (day === 0 ? -6 : 1 - day))
+  d.setUTCDate(d.getUTCDate() - d.getUTCDay())
   return d.toISOString().slice(0, 10)
 }
 function dayLabel(weekStart: string, i: number): string {
@@ -358,7 +359,7 @@ function TimesheetsView() {
   // is requireCapabilityOrAdmin and an admin holds no capabilities (§5).
   const canExport = hasCapability(user, 'export')
   const [params, setParams] = useSearchParams()
-  const weekStart = params.get('weekStart') || mondayOf(todayIso())
+  const weekStart = params.get('weekStart') || sundayOf(todayIso())
 
   const [data, setData] = useState<TimesheetsResponse | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -382,8 +383,8 @@ function TimesheetsView() {
 
   function setWeekStart(d: string) {
     const next = new URLSearchParams(params)
-    const monday = mondayOf(d || todayIso())
-    if (monday !== mondayOf(todayIso())) next.set('weekStart', monday)
+    const sunday = sundayOf(d || todayIso())
+    if (sunday !== sundayOf(todayIso())) next.set('weekStart', sunday)
     else next.delete('weekStart')
     setParams(next, { replace: true })
   }

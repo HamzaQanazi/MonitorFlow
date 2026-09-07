@@ -17,12 +17,13 @@ import './SchedulePage.css'
 function todayIso(): string {
   return new Date().toISOString().slice(0, 10)
 }
-// Monday on/before `iso`, computed in UTC (same convention as TimeClockPage's
-// Timesheets tab, matching the backend's UTC day bucketing).
-function mondayOf(iso: string): string {
+// Sunday on/before `iso`, computed in UTC (same convention as TimeClockPage's
+// Timesheets tab; the backend itself doesn't care which day starts the week
+// — routes/timeClock.js takes weekStart as given, and scheduleSolver.js
+// doesn't bucket by week at all anymore, this is purely a display choice).
+function sundayOf(iso: string): string {
   const d = new Date(`${iso}T00:00:00Z`)
-  const day = d.getUTCDay()
-  d.setUTCDate(d.getUTCDate() + (day === 0 ? -6 : 1 - day))
+  d.setUTCDate(d.getUTCDate() - d.getUTCDay())
   return d.toISOString().slice(0, 10)
 }
 function addDays(iso: string, n: number): string {
@@ -357,7 +358,7 @@ function RosterView() {
   // manage_employees (see TemplatesView).
   const canManage = hasCapability(user, 'manage_employees')
   const [params, setParams] = useSearchParams()
-  const weekStart = params.get('weekStart') || mondayOf(todayIso())
+  const weekStart = params.get('weekStart') || sundayOf(todayIso())
   const weekEnd = addDays(weekStart, 6)
 
   const [employees, setEmployees] = useState<RosterEmployee[] | null>(null)
@@ -388,8 +389,8 @@ function RosterView() {
 
   function setWeekStart(d: string) {
     const next = new URLSearchParams(params)
-    const monday = mondayOf(d || todayIso())
-    if (monday !== mondayOf(todayIso())) next.set('weekStart', monday)
+    const sunday = sundayOf(d || todayIso())
+    if (sunday !== sundayOf(todayIso())) next.set('weekStart', sunday)
     else next.delete('weekStart')
     setParams(next, { replace: true })
   }
@@ -701,13 +702,13 @@ function RosterCellDialog({
 // (the API already supports it via employeeIds) — add a picker if "whole
 // subtree" stops being the common case.
 const WEEKDAYS: { value: number; key: string }[] = [
+  { value: 0, key: 'day_sun' },
   { value: 1, key: 'day_mon' },
   { value: 2, key: 'day_tue' },
   { value: 3, key: 'day_wed' },
   { value: 4, key: 'day_thu' },
   { value: 5, key: 'day_fri' },
   { value: 6, key: 'day_sat' },
-  { value: 0, key: 'day_sun' },
 ]
 
 interface SuggestEntry {
