@@ -66,13 +66,28 @@ test('missing/invalid period → 422', async () => {
 
 let evaluationId;
 
+test('employeeId + departmentId together → 422', async () => {
+  const res = await api('POST', '/evaluations/generate', {
+    token: tokens.root,
+    body: {
+      employeeId: fixtures.employeeIds.field1,
+      departmentId: fixtures.departmentId,
+      periodStart,
+      periodEnd,
+    },
+  });
+  assert.equal(res.status, 422);
+  assert.ok(res.body.errors.departmentId);
+});
+
 test('department manager generates an evaluation for their own employee → 201', async () => {
   const res = await api('POST', '/evaluations/generate', {
     token: tokens.root,
     body: { employeeId: fixtures.employeeIds.field1, periodStart, periodEnd },
   });
   assert.equal(res.status, 201, JSON.stringify(res.body));
-  const { evaluation } = res.body;
+  assert.equal(res.body.evaluations.length, 1);
+  const [evaluation] = res.body.evaluations;
   assert.equal(evaluation.employeeId, fixtures.employeeIds.field1);
   assert.ok(evaluation.score >= 0 && evaluation.score <= 100, `score out of range: ${evaluation.score}`);
   // field1 completed the one request in-period — completedCount must reflect it.
@@ -83,11 +98,68 @@ test('department manager generates an evaluation for their own employee → 201'
   evaluationId = evaluation.id;
 });
 
-test('GET /evaluations?employeeId= lists it back', async () => {
+test('generate for a whole department → one evaluation per active employee', async () => {
+  const res = await api('POST', '/evaluations/generate', {
+    token: tokens.root,
+    body: { departmentId: fixtures.departmentId, periodStart, periodEnd },
+  });
+  assert.equal(res.status, 201, JSON.stringify(res.body));
+  const ids = res.body.evaluations.map((e) => e.employeeId).sort((a, b) => a - b);
+  assert.deepEqual(
+    ids,
+    [fixtures.employeeIds.root, fixtures.employeeIds.field1, fixtures.employeeIds.field2].sort((a, b) => a - b)
+  );
+  // Sorted best-first.
+  const scores = res.body.evaluations.map((e) => e.score);
+  assert.deepEqual([...scores].sort((a, b) => b - a), scores);
+});
+
+test('cross-department departmentId → 404', async () => {
+  const res = await api('POST', '/evaluations/generate', {
+    token: tokens.root,
+    body: { departmentId: fixtures.otherDepartmentId, periodStart, periodEnd },
+  });
+  assert.equal(res.status, 404);
+});
+
+test('no employeeId/departmentId: department manager generates for their own department only', async () => {
+  const res = await api('POST', '/evaluations/generate', {
+    token: tokens.root,
+    body: { periodStart, periodEnd },
+  });
+  assert.equal(res.status, 201, JSON.stringify(res.body));
+  // root's reachable scope is just their own department (view_all, no
+  // view_all_company) — same three employees as the explicit-departmentId case.
+  assert.equal(res.body.evaluations.length, 3);
+});
+
+test('GET /evaluations?departmentId= — leaderboard, latest per employee', async () => {
+  const res = await api('GET', `/evaluations?departmentId=${fixtures.departmentId}`, { token: tokens.root });
+  assert.equal(res.status, 200);
+  assert.equal(res.body.evaluations.length, 3);
+  const scores = res.body.evaluations.map((e) => e.score);
+  assert.deepEqual([...scores].sort((a, b) => b - a), scores);
+});
+
+test('GET /evaluations with no params — leaderboard over the actor\'s whole scope', async () => {
+  const res = await api('GET', '/evaluations', { token: tokens.root });
+  assert.equal(res.status, 200);
+  assert.equal(res.body.evaluations.length, 3);
+});
+
+test('head2 (a different department) never sees field1 in a scope-wide leaderboard', async () => {
+  const res = await api('GET', '/evaluations', { token: tokens.head2 });
+  assert.equal(res.status, 200);
+  assert.ok(!res.body.evaluations.some((e) => e.employeeId === fixtures.employeeIds.field1));
+});
+
+test('GET /evaluations?employeeId= lists full history, newest first', async () => {
   const res = await api('GET', `/evaluations?employeeId=${fixtures.employeeIds.field1}`, { token: tokens.root });
   assert.equal(res.status, 200);
-  assert.equal(res.body.evaluations.length, 1);
-  assert.equal(res.body.evaluations[0].id, evaluationId);
+  // field1 was generated 3 times by this point: the single-employee call,
+  // the whole-department call, and the no-params (own-scope) call.
+  assert.equal(res.body.evaluations.length, 3);
+  assert.ok(res.body.evaluations.some((e) => e.id === evaluationId));
 });
 
 test('GET /evaluations/:id → 200 in scope, 404 out of scope', async () => {

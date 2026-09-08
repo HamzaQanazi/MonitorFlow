@@ -1,0 +1,30 @@
+/* Mode toggle (single employee / compare), same shape as TimeClockPage's
+   .tc-tabs — not reused directly to avoid pulling in that page's other
+   unrelated styles via one shared file. */
+.req-tabs {
+  display: inline-flex;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  width: fit-content;
+}
+
+.req-tab {
+  height: 36px;
+  padding: 0 16px;
+  border: none;
+  background: var(--bg);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.req-tab + .req-tab {
+  border-inline-start: 1px solid var(--border);
+}
+
+.req-tab.is-active {
+  background: var(--surface);
+  color: var(--ink);
+}

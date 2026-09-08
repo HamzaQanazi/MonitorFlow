@@ -426,8 +426,13 @@ const dict: Record<string, Loc> = {
   // evaluations
   nav_evaluations: { en: 'Evaluations', ar: 'التقييمات' },
   eval_title: { en: 'Evaluations', ar: 'التقييمات' },
+  eval_mode_label: { en: 'View', ar: 'العرض' },
+  eval_mode_single: { en: 'Single employee', ar: 'موظف واحد' },
+  eval_mode_compare: { en: 'Compare', ar: 'مقارنة' },
   eval_employee_label: { en: 'Employee', ar: 'الموظف' },
   eval_employee_ph: { en: 'Choose an employee…', ar: 'اختر موظفًا…' },
+  eval_department_label: { en: 'Department', ar: 'الدائرة' },
+  eval_department_all: { en: 'My whole scope', ar: 'كامل نطاقي' },
   eval_period_start: { en: 'Period start', ar: 'بداية الفترة' },
   eval_period_end: { en: 'Period end', ar: 'نهاية الفترة' },
   eval_generate: { en: 'Generate', ar: 'إنشاء' },

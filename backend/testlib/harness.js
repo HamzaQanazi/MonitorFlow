@@ -366,6 +366,7 @@ async function buildFixtures() {
   PASSWORDS.field2 = field2.tempPassword;
 
   fixtures.departmentId = departmentId;
+  fixtures.otherDepartmentId = otherDepartmentId;
   fixtures.levelIds = { manager: managerLevelId, staff: staffLevelId };
   fixtures.employeeIds = { root: root.id, head2: head2.id, field1: field1.id, field2: field2.id };
 
