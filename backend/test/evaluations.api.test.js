@@ -93,22 +93,31 @@ test('department manager generates an evaluation for their own employee → 201'
   // field1 completed the one request in-period — completedCount must reflect it.
   assert.equal(evaluation.breakdown.metrics.completedCount, 1);
   assert.ok(evaluation.breakdown.metrics.avgResolutionMinutes >= 0);
-  // Comparison pool = field1's whole department (root, field1, field2).
-  assert.equal(evaluation.breakdown.poolSize, 3);
+  // Comparison pool = field1's STAFF department peers only (field2) plus
+  // field1 themself — root is excluded, oversight (managerLevelId, holds
+  // view_all) doesn't work the queue and isn't evaluated.
+  assert.equal(evaluation.breakdown.poolSize, 2);
   evaluationId = evaluation.id;
 });
 
-test('generate for a whole department → one evaluation per active employee', async () => {
+test('generating for an oversight employee (root, holds view_all) → 422', async () => {
+  const res = await api('POST', '/evaluations/generate', {
+    token: tokens.admin,
+    body: { employeeId: fixtures.employeeIds.root, periodStart, periodEnd },
+  });
+  assert.equal(res.status, 422);
+  assert.ok(res.body.errors.employeeId);
+});
+
+test('generate for a whole department → excludes the oversight employee (root)', async () => {
   const res = await api('POST', '/evaluations/generate', {
     token: tokens.root,
     body: { departmentId: fixtures.departmentId, periodStart, periodEnd },
   });
   assert.equal(res.status, 201, JSON.stringify(res.body));
   const ids = res.body.evaluations.map((e) => e.employeeId).sort((a, b) => a - b);
-  assert.deepEqual(
-    ids,
-    [fixtures.employeeIds.root, fixtures.employeeIds.field1, fixtures.employeeIds.field2].sort((a, b) => a - b)
-  );
+  assert.deepEqual(ids, [fixtures.employeeIds.field1, fixtures.employeeIds.field2].sort((a, b) => a - b));
+  assert.ok(!ids.includes(fixtures.employeeIds.root));
   // Sorted best-first.
   const scores = res.body.evaluations.map((e) => e.score);
   assert.deepEqual([...scores].sort((a, b) => b - a), scores);
@@ -129,14 +138,16 @@ test('no employeeId/departmentId: department manager generates for their own dep
   });
   assert.equal(res.status, 201, JSON.stringify(res.body));
   // root's reachable scope is just their own department (view_all, no
-  // view_all_company) — same three employees as the explicit-departmentId case.
-  assert.equal(res.body.evaluations.length, 3);
+  // view_all_company) — same two STAFF employees as the explicit-departmentId
+  // case (root themself, oversight, is excluded).
+  assert.equal(res.body.evaluations.length, 2);
 });
 
-test('GET /evaluations?departmentId= — leaderboard, latest per employee', async () => {
+test('GET /evaluations?departmentId= — leaderboard, latest per employee, excludes oversight', async () => {
   const res = await api('GET', `/evaluations?departmentId=${fixtures.departmentId}`, { token: tokens.root });
   assert.equal(res.status, 200);
-  assert.equal(res.body.evaluations.length, 3);
+  assert.equal(res.body.evaluations.length, 2);
+  assert.ok(!res.body.evaluations.some((e) => e.employeeId === fixtures.employeeIds.root));
   const scores = res.body.evaluations.map((e) => e.score);
   assert.deepEqual([...scores].sort((a, b) => b - a), scores);
 });
@@ -144,7 +155,7 @@ test('GET /evaluations?departmentId= — leaderboard, latest per employee', asyn
 test('GET /evaluations with no params — leaderboard over the actor\'s whole scope', async () => {
   const res = await api('GET', '/evaluations', { token: tokens.root });
   assert.equal(res.status, 200);
-  assert.equal(res.body.evaluations.length, 3);
+  assert.equal(res.body.evaluations.length, 2);
 });
 
 test('head2 (a different department) never sees field1 in a scope-wide leaderboard', async () => {
@@ -178,10 +189,37 @@ test('admin can generate/view across every department', async () => {
   assert.equal(res.status, 201, JSON.stringify(res.body));
 });
 
-test('solo department (head2, no active peers): self-vs-prior-period, not cross-department', async () => {
+test('solo STAFF department (no active peers): self-vs-prior-period, not cross-department', async () => {
+  // head2's department has only head2 in it, and head2 is oversight
+  // (excluded) — so a genuine "solo staff member" needs its own fresh
+  // department + hire, done here rather than in the shared fixture.
+  const branches = await api('GET', '/branches', { token: tokens.admin });
+  assert.equal(branches.status, 200, JSON.stringify(branches.body));
+  const dept = await api('POST', '/departments', {
+    token: tokens.admin,
+    body: { name: { en: 'Solo Dept', ar: 'دائرة فردية' }, branchId: branches.body.branches[0].id },
+  });
+  assert.equal(dept.status, 201, JSON.stringify(dept.body));
+
+  const solo = await api('POST', '/employees', {
+    token: tokens.admin,
+    body: {
+      firstName: 'Solo',
+      lastName: 'Staffer',
+      email: 'solo.staffer@fixture.test',
+      phone: '0590000000',
+      birthdate: '1995-01-01',
+      gender: 'female',
+      workerType: 'full_time',
+      departmentId: dept.body.departmentId,
+      levelId: fixtures.levelIds.staff,
+    },
+  });
+  assert.equal(solo.status, 201, JSON.stringify(solo.body));
+
   const res = await api('POST', '/evaluations/generate', {
-    token: tokens.head2,
-    body: { employeeId: fixtures.employeeIds.head2, periodStart, periodEnd },
+    token: tokens.admin,
+    body: { employeeId: solo.body.employee.id, periodStart, periodEnd },
   });
   assert.equal(res.status, 201, JSON.stringify(res.body));
   const [evaluation] = res.body.evaluations;

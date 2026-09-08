@@ -5,6 +5,19 @@
 // against each other, not just look at one in isolation). Gated the same way
 // every other oversight view in the app is (view_all, department-scoped via
 // Gate 2, widened by view_all_company; admin sees the whole company).
+//
+// Staff only (user-directed): an "oversight" employee — one whose level
+// grants view_all, I2's own definition of a manager here — doesn't work the
+// request queue the way a line employee does, so scoring them on
+// completion/reopen/SLA metrics is meaningless, and their near-zero activity
+// would only distort the comparison pool for the staff who ARE being scored.
+// NOT_OVERSIGHT_SQL excludes them from every pool query and from the
+// leaderboard read; a single-employee generate targeting an oversight
+// employee is rejected outright (422) rather than silently producing a
+// number that doesn't mean anything.
+function notOversight(alias) {
+  return `NOT EXISTS (SELECT 1 FROM level_capability lc WHERE lc.level_id = ${alias}.level_id AND lc.capability_key = 'view_all')`;
+}
 const express = require('express');
 const pool = require('../db');
 const { requireAuth, requireCapabilityOrAdmin } = require('../middleware/auth');
@@ -20,13 +33,22 @@ router.use(requireCapabilityOrAdmin('view_all'));
 // outside the actor's scope reads as "doesn't exist," not "forbidden."
 async function loadEmployeeInScope(actor, id) {
   const { rows } = await pool.query(
-    "SELECT id, name, department_id FROM users WHERE id = $1 AND role = 'employee'",
+    "SELECT id, name, department_id, level_id FROM users WHERE id = $1 AND role = 'employee'",
     [id]
   );
   const row = rows[0];
   if (!row) return null;
   if (actor.role !== 'admin' && !(await ownerInScope(actor.id, id))) return null;
   return row;
+}
+
+async function isOversightLevel(levelId) {
+  if (levelId == null) return false;
+  const { rows } = await pool.query(
+    "SELECT 1 FROM level_capability WHERE level_id = $1 AND capability_key = 'view_all'",
+    [levelId]
+  );
+  return rows.length > 0;
 }
 
 function isValidDate(v) {
@@ -73,7 +95,8 @@ async function insertEvaluation(tx, { employeeId, employeeName, departmentId, pe
 // department currently has no active employees.
 async function generateForDepartment(tx, { departmentId, periodStart, periodEnd, actorId }) {
   const { rows: poolRows } = await tx.query(
-    "SELECT id, name FROM users WHERE role = 'employee' AND department_id = $1 AND is_active",
+    `SELECT id, name FROM users u
+     WHERE role = 'employee' AND department_id = $1 AND is_active AND ${notOversight('u')}`,
     [departmentId]
   );
   if (!poolRows.length) return [];
@@ -130,11 +153,17 @@ router.post('/generate', async (req, res, next) => {
     if (employeeId !== undefined) {
       const employee = await loadEmployeeInScope(req.user, employeeId);
       if (!employee) return res.status(404).json({ error: 'Not found' });
+      if (await isOversightLevel(employee.level_id)) {
+        return res.status(422).json({
+          errors: { employeeId: 'This employee holds oversight capabilities and isn’t evaluated — evaluations are for staff who work the request queue' },
+        });
+      }
 
       const { rows: poolRows } = await pool.query(
-        `SELECT id FROM users
+        `SELECT id FROM users u
          WHERE role = 'employee'
-           AND (id = $1 OR (department_id = $2 AND is_active))`,
+           AND (id = $1 OR (department_id = $2 AND is_active))
+           AND ${notOversight('u')}`,
         [employee.id, employee.department_id]
       );
       const metricsRows =
@@ -240,7 +269,7 @@ router.get('/', async (req, res, next) => {
        FROM employee_evaluation e
        JOIN users u ON u.id = e.generated_by
        JOIN users emp ON emp.id = e.employee_id
-       WHERE emp.department_id = ANY($1)
+       WHERE emp.department_id = ANY($1) AND ${notOversight('emp')}
        ORDER BY e.employee_id, e.generated_at DESC`,
       [departmentIds]
     );
