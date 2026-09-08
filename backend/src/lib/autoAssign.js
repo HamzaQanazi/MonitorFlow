@@ -18,23 +18,13 @@
 // anchor directly), so it can never reach outside it. Authorization for this
 // action is the service's auto_assign flag itself.
 const { applyTransition } = require('./workflowEngine');
+const { normalize } = require('./scoring');
 
 // Lower is better for all three metrics. A candidate with no history for a
 // metric yet (new hire, nothing completed) gets 0.5 — neutral, neither
 // rewarded nor punished — so load ends up being the sole tiebreaker for
 // employees with no track record yet, same as the old least-loaded-only pick.
 const WEIGHTS = { reopen: 0.5, ttc: 0.3, load: 0.2 };
-
-function normalize(values) {
-  const known = values.filter((v) => v !== null);
-  // Fewer than 2 data points can't be compared (a lone sample would always
-  // min-max to "best", regardless of how good or bad it actually is) — treat
-  // the whole metric as neutral rather than let one data point swing it.
-  if (known.length < 2) return values.map(() => 0.5);
-  const min = Math.min(...known);
-  const max = Math.max(...known);
-  return values.map((v) => (v === null ? 0.5 : max > min ? (v - min) / (max - min) : 0.5));
-}
 
 function rankCandidates(rows) {
   const normReopen = normalize(rows.map((r) => r.reopen_rate));

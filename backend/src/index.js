@@ -22,6 +22,7 @@ const checklistsRoutes = require('./routes/checklists');
 const knowledgeBaseRoutes = require('./routes/knowledgeBase');
 const eventRoutes = require('./routes/events');
 const translateRoutes = require('./routes/translate');
+const evaluationRoutes = require('./routes/evaluations');
 
 const app = express();
 
@@ -82,6 +83,7 @@ app.use('/api/v1/checklists', checklistsRoutes);
 app.use('/api/v1/knowledge-base', knowledgeBaseRoutes);
 app.use('/api/v1/events', eventRoutes);
 app.use('/api/v1/translate', translateRoutes);
+app.use('/api/v1/evaluations', evaluationRoutes);
 
 app.use((req, res) => res.status(404).json({ error: 'Not found' }));
 
