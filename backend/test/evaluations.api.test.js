@@ -177,3 +177,25 @@ test('admin can generate/view across every department', async () => {
   });
   assert.equal(res.status, 201, JSON.stringify(res.body));
 });
+
+test('solo department (head2, no active peers): self-vs-prior-period, not cross-department', async () => {
+  const res = await api('POST', '/evaluations/generate', {
+    token: tokens.head2,
+    body: { employeeId: fixtures.employeeIds.head2, periodStart, periodEnd },
+  });
+  assert.equal(res.status, 201, JSON.stringify(res.body));
+  const [evaluation] = res.body.evaluations;
+  assert.equal(evaluation.breakdown.poolSize, 2);
+  assert.equal(evaluation.breakdown.comparedTo, 'self');
+});
+
+test('idle period (zero completions) scores near the bottom, not a neutral ~40-50', async () => {
+  const res = await api('POST', '/evaluations/generate', {
+    token: tokens.root,
+    body: { employeeId: fixtures.employeeIds.field2, periodStart: '2099-01-01', periodEnd: '2099-02-01' },
+  });
+  assert.equal(res.status, 201, JSON.stringify(res.body));
+  const [evaluation] = res.body.evaluations;
+  assert.equal(evaluation.breakdown.metrics.completedCount, 0);
+  assert.ok(evaluation.score <= 15, `expected a low idle score, got ${evaluation.score}`);
+});

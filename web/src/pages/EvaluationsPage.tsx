@@ -33,6 +33,11 @@ interface Department {
 }
 interface EvaluationBreakdown {
   poolSize: number
+  // 'department': scored against active department peers (the usual case).
+  // 'self': no active peers, so scored against this employee's own
+  // immediately preceding period instead — a different department's work
+  // isn't a fair comparison.
+  comparedTo: 'department' | 'self'
   metrics: {
     reopenRate: number | null
     slaBreachRate: number | null
@@ -137,10 +142,9 @@ function EvaluationTable({
                       <div className="emp-summary-tablewrap">
                         <h3>{t('eval_breakdown_h')}</h3>
                         <p className="req-meta">
-                          {t('eval_breakdown_pool_before')}
-                          {ev.breakdown.poolSize}
-                          {' '}
-                          {t('eval_breakdown_pool_after')}
+                          {ev.breakdown.comparedTo === 'self'
+                            ? t('eval_breakdown_pool_self')
+                            : `${t('eval_breakdown_pool_before')}${ev.breakdown.poolSize} ${t('eval_breakdown_pool_after')}`}
                         </p>
                         <table className="req-table">
                           <thead>

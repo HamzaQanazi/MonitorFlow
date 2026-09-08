@@ -10,7 +10,7 @@ const pool = require('../db');
 const { requireAuth, requireCapabilityOrAdmin } = require('../middleware/auth');
 const { ownerInScope, departmentScopeIds } = require('../lib/scope');
 const { withTx, logAudit } = require('../lib/audit');
-const { loadMetrics, scoreEmployee } = require('../lib/evaluationMetrics');
+const { loadMetrics, loadSelfComparisonMetrics, scoreEmployee } = require('../lib/evaluationMetrics');
 
 const router = express.Router();
 router.use(requireAuth);
@@ -47,38 +47,62 @@ function publicEvaluation(r) {
   };
 }
 
+// Inserts one immutable evaluation row + its matching audit row, in the
+// caller's transaction. Shared by the single-employee and per-department
+// generate paths so there's exactly one write path to keep in sync.
+async function insertEvaluation(tx, { employeeId, employeeName, departmentId, periodStart, periodEnd, score, breakdown, actorId }) {
+  const { rows } = await tx.query(
+    `INSERT INTO employee_evaluation (employee_id, period_start, period_end, score, breakdown, generated_by)
+     VALUES ($1, $2, $3, $4, $5, $6)
+     RETURNING id, employee_id, period_start, period_end, score, breakdown, generated_by, generated_at`,
+    [employeeId, periodStart, periodEnd, score, JSON.stringify(breakdown), actorId]
+  );
+  await logAudit(tx, actorId, 'evaluation.generated', 'employee_evaluation', rows[0].id, {
+    employeeId, employeeName, departmentId, periodStart, periodEnd, score,
+  });
+  return rows[0];
+}
+
 // Scores every active employee in `departmentId` against each other (the
 // same comparison pool a single-employee generate already used, just scoring
 // every row in it instead of extracting one) and inserts one immutable row
-// per employee, all in the same transaction. Returns the inserted rows —
-// empty if the department currently has no active employees.
+// per employee, all in the same transaction. A department with exactly one
+// active employee has no peers to compare against, so that one employee
+// falls back to loadSelfComparisonMetrics (their own prior period) instead —
+// see evaluationMetrics.js. Returns the inserted rows — empty if the
+// department currently has no active employees.
 async function generateForDepartment(tx, { departmentId, periodStart, periodEnd, actorId }) {
   const { rows: poolRows } = await tx.query(
-    "SELECT id FROM users WHERE role = 'employee' AND department_id = $1 AND is_active",
+    "SELECT id, name FROM users WHERE role = 'employee' AND department_id = $1 AND is_active",
     [departmentId]
   );
-  const poolIds = poolRows.map((r) => r.id);
-  if (!poolIds.length) return [];
+  if (!poolRows.length) return [];
 
-  const metricsRows = await loadMetrics(poolIds, periodStart, periodEnd);
   const saved = [];
-  for (const row of metricsRows) {
-    const { score, breakdown } = scoreEmployee(metricsRows, row.employee_id);
-    const { rows } = await tx.query(
-      `INSERT INTO employee_evaluation (employee_id, period_start, period_end, score, breakdown, generated_by)
-       VALUES ($1, $2, $3, $4, $5, $6)
-       RETURNING id, employee_id, period_start, period_end, score, breakdown, generated_by, generated_at`,
-      [row.employee_id, periodStart, periodEnd, score, JSON.stringify(breakdown), actorId]
+  if (poolRows.length > 1) {
+    const metricsRows = await loadMetrics(poolRows.map((r) => r.id), periodStart, periodEnd);
+    for (const row of metricsRows) {
+      const { score, breakdown } = scoreEmployee(metricsRows, row.employee_id);
+      saved.push(
+        await insertEvaluation(tx, {
+          employeeId: row.employee_id,
+          employeeName: row.employee_name,
+          departmentId,
+          periodStart,
+          periodEnd,
+          score,
+          breakdown,
+          actorId,
+        })
+      );
+    }
+  } else {
+    const [{ id: employeeId, name: employeeName }] = poolRows;
+    const metricsRows = await loadSelfComparisonMetrics(employeeId, periodStart, periodEnd);
+    const { score, breakdown } = scoreEmployee(metricsRows, employeeId);
+    saved.push(
+      await insertEvaluation(tx, { employeeId, employeeName, departmentId, periodStart, periodEnd, score, breakdown, actorId })
     );
-    await logAudit(tx, actorId, 'evaluation.generated', 'employee_evaluation', rows[0].id, {
-      employeeId: row.employee_id,
-      employeeName: row.employee_name,
-      departmentId,
-      periodStart,
-      periodEnd,
-      score,
-    });
-    saved.push(rows[0]);
   }
   return saved;
 }
@@ -99,8 +123,10 @@ router.post('/generate', async (req, res, next) => {
     }
     if (Object.keys(errors).length) return res.status(422).json({ errors });
 
-    // Single employee: unchanged behavior, scored against their own
-    // department peers (the comparison pool).
+    // Single employee: scored against their own department peers — or, if
+    // they have none active, against their own prior period instead
+    // (loadSelfComparisonMetrics; a different department's work isn't
+    // directly comparable).
     if (employeeId !== undefined) {
       const employee = await loadEmployeeInScope(req.user, employeeId);
       if (!employee) return res.status(404).json({ error: 'Not found' });
@@ -111,26 +137,24 @@ router.post('/generate', async (req, res, next) => {
            AND (id = $1 OR (department_id = $2 AND is_active))`,
         [employee.id, employee.department_id]
       );
-      const poolIds = poolRows.map((r) => r.id);
-      const metricsRows = await loadMetrics(poolIds, periodStart, periodEnd);
+      const metricsRows =
+        poolRows.length > 1
+          ? await loadMetrics(poolRows.map((r) => r.id), periodStart, periodEnd)
+          : await loadSelfComparisonMetrics(employee.id, periodStart, periodEnd);
       const { score, breakdown } = scoreEmployee(metricsRows, employee.id);
 
-      const saved = await withTx(async (tx) => {
-        const { rows } = await tx.query(
-          `INSERT INTO employee_evaluation (employee_id, period_start, period_end, score, breakdown, generated_by)
-           VALUES ($1, $2, $3, $4, $5, $6)
-           RETURNING id, employee_id, period_start, period_end, score, breakdown, generated_by, generated_at`,
-          [employee.id, periodStart, periodEnd, score, JSON.stringify(breakdown), req.user.id]
-        );
-        await logAudit(tx, req.user.id, 'evaluation.generated', 'employee_evaluation', rows[0].id, {
+      const saved = await withTx((tx) =>
+        insertEvaluation(tx, {
           employeeId: employee.id,
           employeeName: employee.name,
+          departmentId: employee.department_id,
           periodStart,
           periodEnd,
           score,
-        });
-        return rows[0];
-      });
+          breakdown,
+          actorId: req.user.id,
+        })
+      );
 
       return res
         .status(201)

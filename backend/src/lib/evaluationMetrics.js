@@ -9,9 +9,10 @@
 // same period, not fixed thresholds — the same "normalize across a
 // comparison pool" approach autoAssign.js uses to rank assignment
 // candidates, just scoring one already-chosen employee against their peers
-// instead of picking one from a pool. A department of one just neutrals out
-// (normalize()'s <2-points rule), same as a brand-new hire does in
-// auto-assign.
+// instead of picking one from a pool. An employee with no active peers
+// (a department of one) is compared against their OWN immediately preceding
+// period instead — see loadSelfComparisonMetrics — rather than reaching into
+// a different department, whose work isn't directly comparable.
 const pool = require('../db');
 const { normalize } = require('./scoring');
 
@@ -124,13 +125,37 @@ async function loadMetrics(employeeIds, periodStart, periodEnd) {
   return rows;
 }
 
+// Self-comparison fallback for an employee with no active department peers
+// (a solo department, or the sole survivor after others were deactivated).
+// Comparing them against a DIFFERENT department would be unfair — different
+// teams do different kinds of work, at different natural speeds (user-
+// flagged: "what if some department work takes more than some
+// departments") — so instead they're compared against themself, over the
+// immediately preceding period of equal length. Returns a 2-row pool: the
+// employee's current-period metrics, plus their own prior-period metrics
+// under a synthetic id (-1) that scoreEmployee never looks up directly, only
+// uses to widen the normalize() comparison.
+async function loadSelfComparisonMetrics(employeeId, periodStart, periodEnd) {
+  const days = Math.max(1, Math.round((new Date(periodEnd) - new Date(periodStart)) / 86400000));
+  const priorEnd = periodStart;
+  const priorStartDate = new Date(periodStart);
+  priorStartDate.setUTCDate(priorStartDate.getUTCDate() - days);
+  const priorStart = priorStartDate.toISOString().slice(0, 10);
+
+  const [current] = await loadMetrics([employeeId], periodStart, periodEnd);
+  const [prior] = await loadMetrics([employeeId], priorStart, priorEnd);
+  return [current, { ...prior, employee_id: -1 }];
+}
+
 // Scores `targetEmployeeId` against the whole `metricsRows` pool (their
-// department). Returns { score, breakdown } — breakdown carries every raw
-// figure plus the normalized "goodness" that fed the blend, so a manager
-// looking at the number can see what drove it, not just trust it.
+// department peers, or — via loadSelfComparisonMetrics — their own prior
+// period). Returns { score, breakdown } — breakdown carries every raw figure
+// plus the normalized "goodness" that fed the blend, so a manager looking at
+// the number can see what drove it, not just trust it.
 function scoreEmployee(metricsRows, targetEmployeeId) {
   const idx = metricsRows.findIndex((r) => r.employee_id === targetEmployeeId);
   if (idx === -1) throw new Error('targetEmployeeId not in metricsRows');
+  const row = metricsRows[idx];
 
   // "Lower is better" axes: normalize() puts the lowest raw value near 0, so
   // goodness = 1 - normalized (lowest reopen/SLA-breach/resolution -> goodness 1).
@@ -140,10 +165,16 @@ function scoreEmployee(metricsRows, targetEmployeeId) {
   // "Higher is better": normalized value IS the goodness directly.
   const normCompleted = normalize(metricsRows.map((r) => r.completed_count));
 
+  // A null reopen/SLA-breach/resolution figure normally means "nothing to
+  // measure yet, stay neutral" — EXCEPT when this employee completed
+  // literally nothing in the period. Then it isn't missing data, it IS the
+  // data (an empty period), and shouldn't earn a free neutral 0.5 on three
+  // of the four axes — idle periods score near the bottom, not the middle.
+  const idle = row.completed_count === 0;
   const goodness = {
-    reopen: 1 - normReopen[idx],
-    slaBreach: 1 - normSla[idx],
-    resolution: 1 - normResolution[idx],
+    reopen: idle ? 0 : 1 - normReopen[idx],
+    slaBreach: idle ? 0 : 1 - normSla[idx],
+    resolution: idle ? 0 : 1 - normResolution[idx],
     completed: normCompleted[idx],
   };
   const score =
@@ -153,12 +184,12 @@ function scoreEmployee(metricsRows, targetEmployeeId) {
       WEIGHTS.resolution * goodness.resolution +
       WEIGHTS.completed * goodness.completed);
 
-  const row = metricsRows[idx];
   return {
     score: Math.round(score * 100) / 100,
     breakdown: {
       weights: WEIGHTS,
       poolSize: metricsRows.length,
+      comparedTo: metricsRows.some((r) => r.employee_id === -1) ? 'self' : 'department',
       metrics: {
         reopenRate: row.reopen_rate,
         slaBreachRate: row.sla_breach_rate,
@@ -171,4 +202,4 @@ function scoreEmployee(metricsRows, targetEmployeeId) {
   };
 }
 
-module.exports = { loadMetrics, scoreEmployee };
+module.exports = { loadMetrics, loadSelfComparisonMetrics, scoreEmployee };

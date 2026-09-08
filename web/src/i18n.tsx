@@ -455,6 +455,10 @@ const dict: Record<string, Loc> = {
   eval_breakdown_h: { en: 'What this score is made of', ar: 'مما تتكون هذه النتيجة' },
   eval_breakdown_pool_before: { en: 'Compared against this employee’s department (', ar: 'قورنت بأداء دائرة هذا الموظف (' },
   eval_breakdown_pool_after: { en: 'employees) over the same period.', ar: 'موظف) خلال الفترة نفسها.' },
+  eval_breakdown_pool_self: {
+    en: 'No active peers in this employee’s department — compared against their own immediately preceding period instead.',
+    ar: 'لا يوجد زملاء نشطون في دائرة هذا الموظف — قورن بأدائه في الفترة السابقة مباشرةً بدلاً من ذلك.',
+  },
   eval_metric_reopen: { en: 'Reopen rate', ar: 'معدل إعادة الفتح' },
   eval_metric_sla: { en: 'SLA breach rate', ar: 'معدل تجاوز مهلة الخدمة' },
   eval_metric_resolution: { en: 'Avg. resolution', ar: 'متوسط زمن الحل' },
