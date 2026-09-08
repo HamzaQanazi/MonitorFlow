@@ -23,6 +23,12 @@ web/**/build/
 .DS_Store
 Thumbs.db
 *.swp
+.vscode/
 
 # Local Claude Code tooling
 .claude/
+
+# impeccable plugin's runtime cache (its committed config lives at
+# .impeccable/live/config.json, tracked separately — this only ignores the
+# hook.cache.json files it writes wherever it happens to run from)
+**/.impeccable/hook.cache.json
