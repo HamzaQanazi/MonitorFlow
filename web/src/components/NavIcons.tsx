@@ -40,6 +40,11 @@ const PATHS: Record<string, React.ReactNode> = {
       <path d="M5 20c0-3.5 3-6 7-6s7 2.5 7 6" />
     </>
   ),
+  evaluations: (
+    <>
+      <polygon points="12,3.5 14.6,9 20.5,9.8 16.2,13.8 17.3,19.7 12,16.8 6.7,19.7 7.8,13.8 3.5,9.8 9.4,9" />
+    </>
+  ),
   departments: (
     <>
       <rect x="5" y="4" width="14" height="16" rx="1" />

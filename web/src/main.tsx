@@ -16,6 +16,7 @@ import RequestsPage from './pages/RequestsPage'
 import EmployeesPage from './pages/EmployeesPage'
 import DepartmentsPage from './pages/DepartmentsPage'
 import ReportsPage from './pages/ReportsPage'
+import EvaluationsPage from './pages/EvaluationsPage'
 import TimeClockPage from './pages/TimeClockPage'
 import SchedulePage from './pages/SchedulePage'
 import ChecklistsPage from './pages/ChecklistsPage'
@@ -141,6 +142,7 @@ createRoot(document.getElementById('root')!).render(
             <Route path="requests" element={<Guard need="view_all"><RequestsPage /></Guard>} />
             <Route path="requests/:id" element={<Guard need="view_all"><RequestsPage /></Guard>} />
             <Route path="employees" element={<Guard need="manage_employees" orAdmin><EmployeesPage /></Guard>} />
+            <Route path="evaluations" element={<Guard need="view_all" orAdmin><EvaluationsPage /></Guard>} />
             <Route path="departments" element={<Guard need="admin"><DepartmentsPage /></Guard>} />
             <Route path="reports" element={<Guard need="view_all" orAdmin><ReportsPage /></Guard>} />
             <Route path="timeclock" element={<Guard need="view_all" orAdmin feature="time_clock"><TimeClockPage /></Guard>} />
