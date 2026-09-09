@@ -18,8 +18,7 @@ function lastPart(lastName) {
 // MUST be called inside a transaction: the advisory lock (keyed on the
 // candidate's base prefix + domain) stops two concurrent hires with
 // colliding names from picking the same free address (login_identifier is
-// UNIQUE, so the loser would otherwise 500) — same safety shape as
-// employeeNumber.js's allocateEmployeeNumber.
+// UNIQUE, so the loser would otherwise 500).
 async function allocateEmployeeEmail(tx, firstName, lastName, domain) {
   const first = firstPart(firstName);
   const last = lastPart(lastName);

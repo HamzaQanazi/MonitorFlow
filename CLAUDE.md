@@ -288,18 +288,21 @@ either exception above — flag it the same way before building it.
   (`lib/employeeEmail.js`: two letters of their first name + `.` + last name +
   `@` + the company's wizard-set `email_domain`, e.g. `ha.qanazi@company.org`;
   a colliding name gets a number inserted after the first-name part —
-  `ha2.qanazi@...` — via an advisory-lock retry, same safety shape as the
-  legacy allocator below). One column, one lookup, one flow — do not split
-  into two auth paths; this only changes what value populates that one column
-  for a new employee, not the lookup itself. Server-generated always — a
-  client never supplies one. **Superseded (2026, this deviation flagged for
-  Student 2's awareness — auth is their owned surface, §11):** employees were
-  previously allocated a 4-digit number instead (`1000 + department_id × 100`
-  plus the lowest free offset per department, `lib/employeeNumber.js`,
-  exhausted block → 409). That allocator is left in place but unused by
-  `POST /employees` — existing employee rows keep their number, only new
-  hires get the generated email. Monitor/admin accounts are seed- or
-  admin-created; `POST /auth/register` creates `user` role only.
+  `ha2.qanazi@...` — via an advisory-lock retry). One column, one lookup, one
+  flow — do not split into two auth paths; this only changes what value
+  populates that one column for a new employee, not the lookup itself.
+  Server-generated always — a client never supplies one. **Superseded, then
+  removed (2026-09-09, user-directed cleanup):** employees were previously
+  allocated a 4-digit number instead (`1000 + department_id × 100` plus the
+  lowest free offset per department, exhausted block → 409). That allocator
+  (`lib/employeeNumber.js`) had been left in place but unused by `POST
+  /employees` since the switch to generated emails; with no live caller left,
+  it and its dedicated unit test (`test/employeeNumber.test.js`) were deleted.
+  Existing employee rows hired before that switch keep whatever 4-digit
+  `login_identifier` migration `011_employee_numbers.sql` already gave them —
+  that stored data is untouched by removing the allocator code; only the
+  ability to *generate new* ones this way is gone. Monitor/admin accounts are
+  seed- or admin-created; `POST /auth/register` creates `user` role only.
 
 ---
 
